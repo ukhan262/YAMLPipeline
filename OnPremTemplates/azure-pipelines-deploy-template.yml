@@ -1,0 +1,247 @@
+parameters:
+  environment: ''
+  sql_instancename: ''
+  sql_username: ''
+  sql_password: ''
+  website_physicalpath: ''
+  api_physicalpath: ''
+  perf_physicalpath: ''
+  job_physicalpath: ''
+  ui_binding_url: ''
+  api_binding_url: ''
+  perf_binding_url: ''
+  config_transform: ''
+  timerjobsservice_config_transform: ''
+  perf_config_transform: ''
+
+jobs:
+  - deployment: 'Deploy_SQL_Project'
+    environment: 
+      name: ${{parameters.environment}}
+      resourceType: VirtualMachine
+      tags: 'db'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: 'current'
+                path: '$(Build.ArtifactStagingDirectory)'
+            - task: SqlDacpacDeploymentOnMachineGroup@0
+              displayName: 'SQL DB Deploy'
+              inputs:
+                TaskType: 'dacpac'
+                DacpacFile: '$(Build.ArtifactStagingDirectory)/M2/sql-*/bin/release/M.Data.Sql.dacpac'
+                TargetMethod: 'Server'
+                ServerName: ${{parameters.sql_instancename}}
+                DatabaseName: 'db_Minerva'
+                AuthScheme: sqlServerAuthentication
+                SqlUsername: ${{parameters.sql_username}}
+                SqlPassword: ${{parameters.sql_password}}
+                AdditionalArguments: '/p:BlockOnPossibleDataLoss=false 
+                                      /p:TreatVerificationErrorsAsWarnings=true 
+                                      /p:DropObjectsNotInSource=True 
+                                      /p:DoNotDropObjectTypes=Users;Logins;RoleMembership;ExternalDataSources;DatabaseScopedCredentials
+                                      /p:ExcludeObjectTypes=Users;Logins;RoleMembership;ExternalDataSources;DatabaseScopedCredentials'
+  
+  - deployment: 'Deploy_SPA_Project'
+    environment: 
+      name: ${{parameters.environment}}
+      resourceType: VirtualMachine
+      tags: 'ui'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: 'current'
+                path: '$(Build.ArtifactStagingDirectory)'
+
+            - task: DownloadSecureFile@1
+              displayName: 'Download secure file'
+              inputs:
+                secureFile: star.pfx
+            
+            - task: CmdLine@2
+              displayName: "create sites folders"
+              inputs:
+                script: 'if not exist "${{parameters.website_physicalpath}}" mkdir "${{parameters.website_physicalpath}}"'
+
+            - task: CmdLine@1
+              displayName: 'Deleting Node Modules Folder Content'
+              inputs:
+                filename: 'if exist "${{parameters.website_physicalpath}}\node_modules\" for /d %x in (${{parameters.website_physicalpath}}\node_modules\*) do @rd /s /q "%x"'
+
+            - task: IISWebAppManagementOnMachineGroup@0
+              displayName: 'IIS Web App Manage'
+              inputs:
+                WebsiteName: M2
+                WebsitePhysicalPath: ${{parameters.website_physicalpath}}
+                AddBinding: True
+                Bindings: '{"bindings":[{"protocol":"https","ipAddress":"All Unassigned","port":"443","hostname":"${{parameters.ui_binding_url}}","sslThumbprint":"$(thumbprint)","sniFlag":false}]}'
+                ParentWebsiteNameForVD: M2
+                ParentWebsiteNameForApplication: M2
+            
+            - task: IISWebAppDeploymentOnMachineGroup@0
+              displayName: 'IIS Web App Deploy'
+              inputs:
+                WebSiteName: M2
+                Package: '$(Build.ArtifactStagingDirectory)\M2\spa-$(Build.BuildId).zip'
+                TakeAppOfflineFlag: True
+            
+            - task: qetza.xdttransform.xdttransform-task.xdttransform@3
+              displayName: 'Apply transforms web.${{parameters.config_transform}}.config => web.config'
+              inputs:
+                workingFolder: '${{parameters.website_physicalpath}}\'
+                transforms: 'web.${{parameters.config_transform}}.config => web.config'
+  
+  - deployment: 'Deploy_WebApi_Project'
+    environment: 
+      name: ${{parameters.environment}}
+      resourceType: VirtualMachine
+      tags: 'api'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: 'current'
+                path: '$(Build.ArtifactStagingDirectory)'
+
+            - task: DownloadSecureFile@1
+              displayName: 'Download secure file'
+              inputs:
+                secureFile: star.pfx
+
+            - task: CmdLine@2
+              displayName: "create sites folders"
+              inputs:
+                script: 'if not exist "${{parameters.api_physicalpath}}" mkdir "${{parameters.api_physicalpath}}"'
+
+            - task: IISWebAppManagementOnMachineGroup@0
+              displayName: 'IIS Web App Manage'
+              inputs:
+                WebsiteName: M2API
+                WebsitePhysicalPath: ${{parameters.api_physicalpath}}
+                AddBinding: True
+                Bindings: '{"bindings":[{"protocol":"https","ipAddress":"All Unassigned","port":"443","hostname":"${{parameters.api_binding_url}}","sslThumbprint":"$(thumbprint)","sniFlag":false}]}'
+                ParentWebsiteNameForVD: M2API
+                ParentWebsiteNameForApplication: M2API              
+            
+            - task: IISWebAppDeploymentOnMachineGroup@0
+              displayName: 'IIS Web App Deploy'
+              inputs:
+                WebSiteName: M2API
+                Package: '$(Build.ArtifactStagingDirectory)\M2\webapi-$(Build.BuildId).zip'
+                TakeAppOfflineFlag: True
+            
+            - task: qetza.xdttransform.xdttransform-task.xdttransform@3
+              displayName: 'Apply transforms web.${{parameters.config_transform}}.config => web.config'
+              inputs:
+                workingFolder: '${{parameters.api_physicalpath}}\'
+                transforms: 'web.${{parameters.config_transform}}.config => web.config'
+
+  - deployment: 'Deploy_WebApiPerformance__Project'
+    environment: 
+      name: ${{parameters.environment}}
+      resourceType: VirtualMachine
+      tags: 'perf'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: 'current'
+                path: '$(Build.ArtifactStagingDirectory)'
+
+            - task: DownloadSecureFile@1
+              displayName: 'Download secure file'
+              inputs:
+                secureFile: star.pfx
+
+            - task: CmdLine@2
+              displayName: "create sites folders"
+              inputs:
+                script: 'if not exist "${{parameters.perf_physicalpath}}" mkdir "${{parameters.perf_physicalpath}}"'
+
+            - task: IISWebAppManagementOnMachineGroup@0
+              displayName: 'IIS Web App Manage'
+              inputs:
+                WebsiteName: M2PERFAPI
+                WebsitePhysicalPath: ${{parameters.perf_physicalpath}}
+                AddBinding: True
+                Bindings: '{"bindings":[{"protocol":"https","ipAddress":"All Unassigned","port":"443","hostname":"${{parameters.perf_binding_url}}","sslThumbprint":"$(thumbprint)","sniFlag":false}]}'
+                ParentWebsiteNameForVD: M2PERFAPI
+                ParentWebsiteNameForApplication: M2PERFAPI              
+            
+            - task: IISWebAppDeploymentOnMachineGroup@0
+              displayName: 'IIS Web App Deploy'
+              inputs:
+                WebSiteName: M2PERFAPI
+                Package: '$(Build.ArtifactStagingDirectory)\M2\webapi-$(Build.BuildId).zip'
+                TakeAppOfflineFlag: True
+
+            - task: CmdLine@2
+              displayName: "Copy Performance WebAPI Config file"
+              inputs:
+                script: 'xcopy "${{parameters.perf_physicalpath}}\ConfigFiles\${{parameters.perf_config_transform}}_Web.config" "${{parameters.perf_physicalpath}}\Web.config" /s /c /y'                
+    
+  - deployment: 'Deploy_TimerJobsService_Project'  
+    dependsOn: 'Deploy_WebApiPerformance__Project'
+    environment: 
+      name: ${{parameters.environment}}
+      resourceType: VirtualMachine
+      tags: 'jobs'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: 'current'
+                path: '$(Build.ArtifactStagingDirectory)'
+
+            - task: CmdLine@2
+              displayName: "create sites folders"
+              inputs:
+                script: 'if not exist "${{parameters.job_physicalpath}}" mkdir "${{parameters.job_physicalpath}}"'
+
+            - task: PowerShell@2
+              displayName: 'get process id for TImerJobsService'
+              inputs:
+                targetType: 'inline'
+                script: |
+                  $processid = Get-WmiObject -Class Win32_Service -Filter "Name LIKE 'TimerJobsService'" | Select-Object -ExpandProperty ProcessId
+                  $process = Get-Process -Id $processid
+                  Write-Output "##vso[task.setvariable variable=processid;]$processid"
+
+            - task: CmdLine@2
+              displayName: "Stop Service"
+              inputs:
+                script: 'taskkill /f /pid $(processid)'
+            
+            - task: CopyFiles@2
+              displayName: 'Copy TimerJobService Project Files'
+              inputs:
+                SourceFolder: '$(Build.ArtifactStagingDirectory)\M2\timerjobsservice-$(Build.BuildId)'
+                TargetFolder: '${{parameters.job_physicalpath}}'
+                OverWrite: true
+
+            - task: CmdLine@2
+              displayName: "Copy Timer Jobs Service Config file"
+              inputs:
+                script: 'xcopy "${{parameters.job_physicalpath}}\ConfigFiles\${{parameters.timerjobsservice_config_transform}}_M.TimerJobsService.exe.config" "${{parameters.job_physicalpath}}\bin\release\M.TimerJobsService.exe.config" /s /c /y' 
+            
+            - task: CmdLine@2
+              displayName: "Start Service"
+              inputs:
+                script: 'sc start "TimerJobsService"'

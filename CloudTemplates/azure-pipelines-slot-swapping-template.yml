@@ -1,0 +1,21 @@
+parameters:
+  sourceSlotName: 'staging'
+  destinationSlotName: 'production'
+  appname: ''
+  resourcegroupname: ''
+  azuresubscription: 'Wedgewood-ARM'
+  command: 'Switch'
+
+steps:
+- task: AzurePowerShell@4
+  displayName: '${{parameters.command}} ${{parameters.slotName}} on ${{parameters.appname}}'
+  inputs:
+    azureSubscription: ${{parameters.azuresubscription}}
+    ScriptType: InlineScript
+    Inline: '${{parameters.command}}-AzureRmWebAppSlot 
+                -ResourceGroupName ${{parameters.resourcegroupname}} 
+                -Name ${{parameters.appname}} 
+                -SourceSlotName ${{parameters.sourceSlotName}}
+                -DestinationSlotName ${{parameters.destinationSlotName}}
+                -verbose'
+    azurePowerShellVersion: LatestVersion

@@ -1,0 +1,412 @@
+# will be passing the unsecure values in the parent pipeline
+# secure values will go from the azure key vault or AzDo variable groups
+parameters:
+  pipeline_environment: ''
+  pool: 'On-Prem Default'
+  azuresubscription: 'Wedgewood-ARM'
+  resourcegroupname: 'FortressDEV'
+  webmvcname: ''
+  webapiname: ''
+  webjobsname: ''
+  functionappname: ''
+  sql_servername: ''
+  sql_dbname: ''
+  ps_sql_servername: 'fortress-sql-test'
+  sql_dbscaleup: ''
+  sql_dbscaledown: ''
+  db_edition: 'Standard'
+
+  # reading the keys from AzDo secret variable group (Sql Server)
+  sql_username: ''
+  sql_password: ''
+  
+  # appsettings parameters for webmvc, webapi, webjobs
+  # reading the keys from AzDo secret variable groups
+  active_site: ''
+  allow_update_calculation_fields: ''
+  env: ''
+  appinsight_key: ''
+  azure_search_key: ''
+  azure_search_uri: ''
+  dr_api_baseaddress: ''
+  dr_sharepoint_url: ''
+  fortress_api_url: ''
+  googlemaps_js_key: ''
+  ida_adfs_metadataendpoint: ''
+  ida_appkey: ''
+  ida_clientid: ''
+  ida_post_logout_redirect_uri: ''
+  ida_realm: ''
+  ida_resourceid: ''
+  ida_wreply: ''
+  import_post_process_queue_name: ''
+  trustee_sales_index: ''
+  audit_log_queue: ''
+  opendoor_auth_key: ''
+  opendoor_base_api_url: ''
+  authorization_uri: ''
+  ida_MinervaWSTrustEndpoint: ''
+  permission_url: ''
+  properties_details_page_url: ''
+  properties_summary_page_url: ''
+  wecsvc_audit_url: ''
+  wecsvc_url: ''
+
+  # connectionstrings parameters for webapi and webjobs
+  # reading these from AzDo secret variable groups
+  azure_signalr_connectionstring: ''
+  azure_fortress_storage_connectionstring: ''
+  azure_wecsvc_storage_connectionstring: ''
+  fortress_sql_context: ''
+  minerva_sql_context: ''
+  redis_cache_connectionstring: ''
+  wedgewoodlogs_connectionstring: ''
+
+jobs:  
+  - deployment: 'Deploy_WebMVC_Project'
+    pool:
+      name: ${{parameters.pool}}
+    environment: 
+      name: ${{parameters.pipeline_environment}}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - task: UniversalPackages@0
+              inputs:
+                command: 'download'
+                downloadDirectory: '$(System.DefaultWorkingDirectory)'
+                feedsToUse: 'internal'
+                vstsFeed: ${{parameters.artifact_feed}}
+                vstsFeedPackage: fortress-artifacts
+                vstsPackageVersion: '*'
+            
+            - task: AzureAppServiceManage@0
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                WebAppName: '${{parameters.webmvcname}}'
+                Action: 'Stop Azure App Service'
+
+            - task: ExtractFiles@1
+              displayName: 'Extract files for transformation'
+              inputs:
+                archiveFilePatterns: '$(System.DefaultWorkingDirectory)\webmvc.zip'
+                destinationFolder: '$(System.DefaultWorkingDirectory)\webmvc'
+            
+            - task: FileTransform@2
+              displayName: 'File Transform: web.${{parameters.env}}.config -> web.config'
+              inputs:
+                folderPath: '$(System.DefaultWorkingDirectory)\webmvc'
+                xmlTransformationRules: '-transform **\*.${{parameters.env}}.config -xml **\*.config'
+
+            - task: FileTransform@1
+              displayName: 'File Transform: angular8 config.json variable substitution'
+              inputs:
+                folderPath: '$(System.DefaultWorkingDirectory)\webmvc'
+                fileType: json
+                targetFiles: angular/assets/config.json
+
+            - task: DeleteFiles@1
+              displayName: 'Delete old zip folder as the overwrite is not working'
+              inputs:
+                SourceFolder: '$(System.DefaultWorkingDirectory)\webmvc.zip'
+                Contents: whatever
+                RemoveSourceFolder: true
+            
+            - task: ArchiveFiles@2
+              displayName: 'archive files'
+              inputs:
+                rootFolderOrFile: '$(System.DefaultWorkingDirectory)\webmvc'
+                includeRootFolder: false
+                archiveFile: '$(System.DefaultWorkingDirectory)\webmvc.zip'
+
+            - task: AzureRmWebAppDeployment@4
+              displayName: 'Deploy Azure App Service: ${{parameters.webmvcname}}'
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                WebAppName: '${{parameters.webmvcname}}'
+                packageForLinux: '$(System.DefaultWorkingDirectory)\webmvc.zip'
+
+            # can read these from secret variables from Azure DevOps
+            # can read these from azure keyvault
+            - task: AzureAppServiceSettings@1
+              displayName: 'Azure App Service Settings: ${{parameters.webmvcname}}'
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                appName: '${{parameters.webmvcname}}'
+                appSettings: |
+                  [
+                    {"name":"ActiveSite","value":"${{parameters.active_site}}","slotSetting":false},
+                    {"name":"AllowUpdateCalculationForFields","value":"${{parameters.allow_update_calculation_fields}}","slotSetting":false},
+                    {"name":"AllowUpdateCalculationTriggers","value":"false","slotSetting":false},
+                    {"name":"apiBaseAddress","value":"${{parameters.fortress_api_url}}","slotSetting":false},
+                    {"name":"APPINSIGHTS_INSTRUMENTATIONKEY","value":"${{parameters.appinsight_key}}","slotSetting":true},
+                    {"name":"AuthorizationUri","value":"${{parameters.authorization_uri}}","slotSetting":true},
+                    {"name":"DRStatusApiBaseAddress","value":"${{parameters.dr_api_baseaddress}}","slotSetting":false},
+                    {"name":"enableAngular8Feature","value":"0","slotSetting":true},
+                    {"name":"expBidExpirationDays","value":"7","slotSetting":true},
+                    {"name":"expCounterExpirationDays","value":"7","slotSetting":true},
+                    {"name":"GoogleMapsJavascriptApiKey","value":"${{parameters.googlemaps_js_key}}","slotSetting":false},
+                    {"name":"gridSignalRLoadSeconds","value":"2","slotSetting":false},
+                    {"name":"ida:AppKey","value":"${{parameters.ida_appkey}}","slotSetting":false},
+                    {"name":"ida:ClientId","value":"${{parameters.ida_clientid}}","slotSetting":false},
+                    {"name":"ida:MetadataEndpoint","value":"${{parameters.ida_adfs_metadataendpoint}}","slotSetting":false},
+                    {"name":"ida:PostLogoutRedirectUri","value":"${{parameters.ida_post_logout_redirect_uri}}","slotSetting":false},
+                    {"name":"ida:ResourceId","value":"${{parameters.ida_resourceid}}","slotSetting":false},
+                    {"name":"ida:UseADFS","value":"true","slotSetting":false},
+                    {"name":"ida:Wreply","value":"${{parameters.ida_wreply}}","slotSetting":false},
+                    {"name":"ida:Wtrealm","value":"${{parameters.ida_realm}}","slotSetting":false},
+                    {"name":"iKey","value":"${{parameters.appinsight_key}}","slotSetting":false},
+                    {"name":"InactiveSite","value":"DR","slotSetting":false},
+                    {"name":"MinervaReportUrl","value":"${{parameters.minerva_report_url}}","slotSetting":true},
+                    {"name":"MinervaUrl","value":"${{parameters.minerva_url}}","slotSetting":true},
+                    {"name":"OffsetForActiveSaleDate","value":"0","slotSetting":true},
+                    {"name":"opendoorBidExpirationDays","value":"45","slotSetting":true},
+                    {"name":"OpendoorBidsSubmitApiUri","value":"bids/submit_bids","slotSetting":true},
+                    {"name":"opendoorCounterExpirationDays","value":"15","slotSetting":true},
+                    {"name":"perchBidExpirationDays","value":"45","slotSetting":true},
+                    {"name":"perchCounterExpirationDays","value":"15","slotSetting":true},
+                    {"name":"permissionUrl","value":"${{parameters.permission_url}}","slotSetting":false},
+                    {"name":"signalRCheckDuration","value":"6","slotSetting":false},
+                    {"name":"signalRCheckInterval","value":"2","slotSetting":false},
+                    {"name":"signalRLogging","value":"true","slotSetting":false},
+                    {"name":"signalRRefreshInMinutes","value":"5","slotSetting":false},
+                    {"name":"SystemMessageDurationInSecond","value": "60","slotSetting": true},
+                    {"name":"taskBoardQueueEnabled","value":"true","slotSetting":false},
+                    {"name":"taskBoardStatsInterval","value":"1","slotSetting":false},
+                    {"name":"TBRowHighLightDuration","value":"2","slotSetting":true},
+                    {"name":"titleStatusDaysCount","value":"180","slotSetting":false},
+                    {"name":"UserSSL","value":"true","slotSetting":false},
+                    {"name":"WEBSITE_NODE_DEFAULT_VERSION","value":"6.9.1","slotSetting":false},
+                    {"name":"WECSVC_URL","value":"${{parameters.wecsvc_url}}","slotSetting":false}
+                  ]
+
+            - task: AzureAppServiceManage@0
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                WebAppName: '${{parameters.webmvcname}}'
+                Action: 'Start Azure App Service'
+
+  - deployment: 'Deploy_WebApi_Project'
+    pool:
+      name: ${{parameters.pool}}
+    environment: 
+      name: ${{parameters.pipeline_environment}}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - task: UniversalPackages@0
+              inputs:
+                command: 'download'
+                downloadDirectory: '$(System.DefaultWorkingDirectory)'
+                feedsToUse: 'internal'
+                vstsFeed: ${{parameters.artifact_feed}}
+                vstsFeedPackage: fortress-artifacts
+                vstsPackageVersion: '*'
+
+            - task: ExtractFiles@1
+              displayName: 'Extract files for transformation'
+              inputs:
+                archiveFilePatterns: '$(System.DefaultWorkingDirectory)\webapi.zip'
+                destinationFolder: '$(System.DefaultWorkingDirectory)\webapi'
+            
+            - task: FileTransform@2
+              displayName: 'File Transform: web.${{parameters.env}}.config -> web.config'
+              inputs:
+                folderPath: '$(System.DefaultWorkingDirectory)\webapi'
+                xmlTransformationRules: '-transform **\*.${{parameters.env}}.config -xml **\*.config'
+
+            - task: DeleteFiles@1
+              displayName: 'Delete old zip folder as the overwrite is not working'
+              inputs:
+                SourceFolder: '$(System.DefaultWorkingDirectory)\webapi.zip'
+                Contents: whatever
+                RemoveSourceFolder: true
+            
+            - task: ArchiveFiles@2
+              displayName: 'archive files'
+              inputs:
+                rootFolderOrFile: '$(System.DefaultWorkingDirectory)\webapi'
+                includeRootFolder: false
+                archiveFile: '$(System.DefaultWorkingDirectory)\webapi.zip'
+
+            - task: AzureRmWebAppDeployment@4
+              displayName: 'Deploy Azure App Service: ${{parameters.webapiname}}'
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                WebAppName: '${{parameters.webapiname}}'
+                packageForLinux: '$(System.DefaultWorkingDirectory)\webapi.zip'   
+
+            # can read these from secret variables from Azure DevOps
+            # can read these from azure keyvault
+            # changed Environment config from parameterized to PROD
+            - task: AzureAppServiceSettings@1
+              displayName: 'Azure App Service Settings: ${{parameters.webapiname}}'
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                appName: '${{parameters.webapiname}}'
+                appSettings: |
+                  [
+                    {"name":"AllowUpdateCalculationTriggers","value":"false","slotSetting":true},
+                    {"name":"APPINSIGHTS_INSTRUMENTATIONKEY","value":"${{parameters.appinsight_key}}","slotSetting":true},
+                    {"name":"AuditLogQueueName","value":"${{parameters.audit_log_queue}}","slotSetting":true},
+                    {"name":"AuthorizationCacheDuration","value":"2","slotSetting":true},
+                    {"name":"AuthorizationUri","value":"${{parameters.authorization_uri}}","slotSetting":true},
+                    {"name":"AzureSearchKey","value":"${{parameters.azure_search_key}}","slotSetting":true},
+                    {"name":"AzureSearchUri","value":"${{parameters.azure_search_uri}}","slotSetting":true},
+                    {"name":"BlockedSaleTypesFromODBidding","value":"none;","slotSetting":true},
+                    {"name":"EnableSavingCoreLogicXmls","value":"false","slotSetting":false},
+                    {"name":"Environment","value":"PROD","slotSetting":true},
+                    {"name":"ForeclosureFilesLimit","value":"200","slotSetting":true},
+                    {"name":"GoogleMapsJavascriptApiKey","value":"${{parameters.googlemaps_js_key}}","slotSetting":false},
+                    {"name":"ida:Audience","value":"${{parameters.ida_resourceid}}","slotSetting":true},
+                    {"name":"ida:MetadataEndpoint","value":"${{parameters.ida_adfs_metadataendpoint}}","slotSetting":true},
+                    {"name":"ida:MinervaWSTrustEndpoint","value":"${{parameters.ida_MinervaWSTrustEndpoint}}","slotSetting":true},
+                    {"name":"ida:UseADFS","value":"true","slotSetting":true},
+                    {"name":"ida:Wtrealm","value":"${{parameters.ida_realm}}","slotSetting":true},
+                    {"name":"ImportPostProcessQueueName","value":"${{parameters.import_post_process_queue_name}}","slotSetting":true},
+                    {"name":"iKey","value":"${{parameters.appinsight_key}}","slotSetting":false},
+                    {"name":"OffsetForActiveSaleDate","value":"0","slotSetting":true},
+                    {"name":"OpendoorAuctionsApiUri","value":"auctions/active/","slotSetting":true},
+                    {"name":"OpendoorAuthorizationKey","value":"${{parameters.opendoor_auth_key}}","slotSetting":true},
+                    {"name":"OpendoorBaseApiUri","value":"${{parameters.opendoor_base_api_url}}","slotSetting":true},
+                    {"name":"OpendoorBidsDaysParamName","value":"days","slotSetting":true},
+                    {"name":"OpendoorBidsResponseApiUri","value":"bids/","slotSetting":true},
+                    {"name":"OpendoorBidsStateFieldName","value":"state","slotSetting":true},
+                    {"name":"OpendoorBidsSubmitApiUri","value":"bids/submit_bids","slotSetting":true},
+                    {"name":"OpendoorMarketParamName","value":"market","slotSetting":true},
+                    {"name":"OpendoorProductTypeParamName","value":"PRODUCT_TYPE","slotSetting":true},
+                    {"name":"PropertyDetailPage_Url","value":"${{parameters.properties_details_page_url}}","slotSetting":true},
+                    {"name":"TemporaryFilesPath","value":"D:\\local\\Temp\\","slotSetting":true},
+                    {"name":"PropertySummaryPage_Url","value":"${{parameters.properties_summary_page_url}}","slotSetting":true},
+                    {"name":"TrusteeSaleResetClearToValue","value":"60","slotSetting":true},
+                    {"name":"TrusteeSalesSearchIndexName","value":"${{parameters.trustee_sales_index}}","slotSetting":true},
+                    {"name":"UseAzureSearchServiceForImport","value":"true","slotSetting":true},
+                    {"name":"WEBSITE_NODE_DEFAULT_VERSION","value":"6.9.1","slotSetting":true},
+                    {"name":"WECSVC_Audit_URL","value":"${{parameters.wecsvc_audit_url}}","slotSetting":true},
+                    {"name":"WECSVC_URL","value":"${{parameters.wecsvc_url}}","slotSetting":true},
+                    {"name":"ZillowRequestCount","value":"200","slotSetting":true}
+                  ]
+                connectionStrings: |
+                  [
+                    {"name":"Azure:SignalR:ConnectionString","value":"${{parameters.azure_signalr_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"AzureStorageConnString","value":"${{parameters.azure_fortress_storage_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"AzureWebJobsDashboard","value":"${{parameters.azure_fortress_storage_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"AzureWebJobsStorage","value":"${{parameters.azure_fortress_storage_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"AzureWecSvcStorage","value":"${{parameters.azure_wecsvc_storage_connectionstring}}","type":"SQLAzure","slotSetting":true},
+                    {"name":"FortressContext","value":"${{parameters.fortress_sql_context}}","type":"SQLAzure","slotSetting":false},
+                    {"name":"MinervaContext","value":"${{parameters.minerva_sql_context}}","type":"SQLAzure","slotSetting":false},
+                    {"name":"RedisCacheConnString","value":"${{parameters.redis_cache_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"WedgewoodLogs","value":"${{parameters.wedgewoodlogs_connectionstring}}","type":"Custom","slotSetting":false}
+                  ]
+            
+            - task: AzureAppServiceManage@0
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                WebAppName: '${{parameters.webapiname}}'
+                Action: 'Start Azure App Service'
+
+  - deployment: 'Deploy_WebJobs_Project'
+    pool:
+      name: ${{parameters.pool}}
+    environment: 
+      name: ${{parameters.pipeline_environment}}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - task: UniversalPackages@0
+              inputs:
+                command: 'download'
+                downloadDirectory: '$(System.DefaultWorkingDirectory)'
+                feedsToUse: 'internal'
+                vstsFeed: ${{parameters.artifact_feed}}
+                vstsFeedPackage: fortress-artifacts
+                vstsPackageVersion: '*'
+
+            - task: AzureAppServiceManage@0
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                WebAppName: '${{parameters.webjobsname}}'
+                Action: 'Stop Azure App Service'
+
+            - task: AzureRmWebAppDeployment@4
+              displayName: 'Deploy Azure App Service: ${{parameters.webjobsname}}'
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                WebAppName: '${{parameters.webjobsname}}'
+                packageForLinux: '$(System.DefaultWorkingDirectory)\webjobs'
+                enableCustomDeployment: true
+                TakeAppOfflineFlag: false
+                RemoveAdditionalFilesFlag: true
+                ExcludeFilesFromAppDataFlag: false
+            
+            # can read these from secret variables from Azure DevOps
+            # can read these from azure keyvault
+            - task: AzureAppServiceSettings@1
+              displayName: 'Azure App Service Settings: ${{parameters.webjobsname}}'
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                appName: '${{parameters.webjobsname}}'
+                appSettings: |
+                  [
+                    {"name":"AllowDataResetJobToRun","value":"true","slotSetting":false},
+                    {"name":"AllowTimerJobToRun","value":"true","slotSetting":false},
+                    {"name":"AllowtoUpdateZestimate","value":"true","slotSetting":false},
+                    {"name":"AppEnvironment","value":"azure.webJob","slotSetting":true},
+                    {"name":"APPINSIGHTS_INSTRUMENTATIONKEY","value":"${{parameters.appinsight_key}}","slotSetting":true},
+                    {"name":"AppName","value":"WebJobs","slotSetting":true},
+                    {"name":"AuditLogQueueName","value":"${{parameters.audit_log_queue}}","slotSetting":true},
+                    {"name":"AzureSearchApiVersion","value":"2017-11-11","slotSetting":true},
+                    {"name":"AzureSearchKey","value":"${{parameters.azure_search_key}}","slotSetting":true},
+                    {"name":"AzureSearchUri","value":"${{parameters.azure_search_uri}}","slotSetting":true},
+                    {"name":"DR_ENABLE_EXPORT","value":"1","slotSetting":true},
+                    {"name":"DR_END_DATE_OFFSET","value":"7","slotSetting":true},
+                    {"name":"DR_SHAREPOINT_FOLDER_NAME","value":"${{parameters.env}}","slotSetting":true},
+                    {"name":"DR_SHAREPOINT_URL","value":"${{parameters.dr_sharepoint_url}}","slotSetting":true},
+                    {"name":"DR_START_DATE_OFFSET","value":"-3","slotSetting":true},
+                    {"name":"EnableSavingCoreLogicXmls","value":"false","slotSetting":true},
+                    {"name":"Environment","value":"PROD","slotSetting":true},
+                    {"name":"iKey","value":"${{parameters.appinsight_key}}","slotSetting":false},
+                    {"name":"OpendoorAuctionsApiUri","value":"auctions/active/","slotSetting":true},
+                    {"name":"OpendoorAuthorizationKey","value":"${{parameters.opendoor_auth_key}}","slotSetting":true},
+                    {"name":"OpendoorBaseApiUri","value":"${{parameters.opendoor_base_api_url}}","slotSetting":true},
+                    {"name":"OpendoorBidsDaysParamName","value":"days","slotSetting":true},
+                    {"name":"OpendoorBidsResponseApiUri","value":"bids/","slotSetting":true},
+                    {"name":"OpendoorBidsStateFieldName","value":"state","slotSetting":true},
+                    {"name":"OpendoorBidsSubmitApiUri","value":"bids/submit_bids","slotSetting":true},
+                    {"name":"OpendoorMarketParamName","value":"market","slotSetting":true},
+                    {"name":"OpendoorProductTypeParamName","value":"PRODUCT_TYPE","slotSetting":true},
+                    {"name":"OpendoorProductTypeParamValue","value":"out of buybox","slotSetting":true},
+                    {"name":"TrusteeSalesSearchIndexName","value":"${{parameters.trustee_sales_index}}","slotSetting":true},
+                    {"name":"UpdateZestimateForUpcomingDays","value":"30","slotSetting":true},
+                    {"name":"UseAzureSearchServiceForImport","value":"true","slotSetting":true},
+                    {"name":"WEBAPI_URL","value":"${{parameters.fortress_api_url}}","slotSetting":true},
+                    {"name":"WEBSITE_NODE_DEFAULT_VERSION","value":"6.9.1","slotSetting":false},
+                    {"name":"WEBSITE_TIME_ZONE","value":"Central Standard Time","slotSetting":true},
+                    {"name":"WECSVC_Audit_URL","value":"${{parameters.wecsvc_audit_url}}","slotSetting":true},
+                    {"name":"WECSVC_URL","value":"${{parameters.wecsvc_url}}","slotSetting":true},
+                    {"name":"ZillowRequestCount","value":"100","slotSetting":true}
+                  ]
+                connectionStrings: |
+                  [
+                    {"name":"Azure:SignalR:ConnectionString","value":"${{parameters.azure_signalr_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"AzureStorageConnString","value":"${{parameters.azure_fortress_storage_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"AzureWebJobsDashboard","value":"${{parameters.azure_fortress_storage_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"AzureWebJobsStorage","value":"${{parameters.azure_fortress_storage_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"AzureWecSvcStorage","value":"${{parameters.azure_wecsvc_storage_connectionstring}}","type":"SQLAzure","slotSetting":true},
+                    {"name":"FortressContext","value":"${{parameters.fortress_sql_context}}","type":"SQLAzure","slotSetting":false},
+                    {"name":"MinervaContext","value":"${{parameters.minerva_sql_context}}","type":"SQLAzure","slotSetting":false},
+                    {"name":"RedisCacheConnString","value":"${{parameters.redis_cache_connectionstring}}","type":"Custom","slotSetting":true},
+                    {"name":"WedgewoodLogs","value":"${{parameters.wedgewoodlogs_connectionstring}}","type":"Custom","slotSetting":false}
+                  ]
+
+            - task: AzureAppServiceManage@0
+              inputs:
+                azureSubscription: '${{parameters.azuresubscription}}'
+                WebAppName: '${{parameters.webjobsname}}'
+                Action: 'Start Azure App Service'

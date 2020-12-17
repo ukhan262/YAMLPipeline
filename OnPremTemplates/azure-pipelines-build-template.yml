@@ -1,0 +1,166 @@
+parameters:
+  buildConfiguration: 'Release'
+  buildPlatform: 'Any CPU'
+  pool: 'On-Prem Default'
+  solution: 'M2.sln'
+
+jobs:
+  - job: Build
+    displayName: 'Build job'
+    pool: 
+      name: ${{parameters.pool}}
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+    - task: PowerShell@2
+      displayName: 'dump all env variables'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $var = (gci env:*).GetEnumerator() | Sort-Object Name
+          $out = ""
+          Foreach ($v in $var) {$out = $out + "`t{0,-28} = {1,-28}`n" -f $v.Name, $v.Value}
+          
+          write-output "dump variables on $env:BUILD_ARTIFACTSTAGINGDIRECTORY\env_variables.md"
+          $fileName = "$env:BUILD_ARTIFACTSTAGINGDIRECTORY\test.md"
+          set-content $fileName $out
+          
+          write-output "##vso[task.addattachment type=Distributedtask.Core.Summary;name=Environment Variables;]$fileName"
+
+    - task: CmdLine@1
+      displayName: 'Deleting Node Modules Folder'
+      inputs:
+        filename: 'if exist "M.Client.SPA\node_modules\" for /d %x in (M.Client.SPA\node_modules\*) do @rd /s /q "%x"'
+
+    - task: CmdLine@1
+      displayName: 'Creating Node Modules Folder'
+      inputs:
+        filename: 'if not exist "M.Client.SPA\node_modules\" mkdir "M.Client.SPA\node_modules"'
+
+    - task: Npm@0
+      displayName: 'NPM progress false'
+      inputs:
+        cwd: M.Client.SPA
+        command: set
+        arguments: 'progress=false'
+
+    - task: Npm@0
+      displayName: 'NPM set registry'
+      inputs:
+        cwd: M.Client.SPA
+        command: config
+        arguments: 'set registry http://registry.npmjs.org/'
+
+    - task: Npm@0
+      displayName: 'Getting Node_Modules'
+      inputs:
+        command: install
+        cwd: M.Client.SPA
+
+    - task: Npm@0
+      displayName: 'Increase Memory Size'
+      inputs:
+        cwd: M.Client.SPA
+        arguments: '-g increase-memory-limit'
+
+    - task: Npm@0
+      displayName: Bundling
+      inputs:
+        cwd: M.Client.SPA
+        command: run
+        arguments: 'build:aot'
+          
+    - task: NuGetToolInstaller@0
+      displayName: 'Use NuGet 5.5.x'
+      inputs:
+        versionSpec: 5.5.x
+
+    - task: NuGetCommand@2
+      displayName: 'NuGet restore'
+      inputs:
+        restoreSolution: '${{parameters.solution}}'
+        noCache: true
+
+    - task: VSBuild@1
+      displayName: 'Build solution'
+      inputs:
+        solution: '${{parameters.solution}}'
+        platform: '${{parameters.buildPlatform}}'
+        configuration: '${{parameters.buildConfiguration}}'
+        clean: true
+
+    - task: ArchiveFiles@2
+      condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+      displayName: 'Zip Web Files'
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)\M.Client.SPA\'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)\spa-$(Build.BuildId).zip'
+        replaceExistingArchive: true
+
+    - task: ArchiveFiles@2
+      condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+      displayName: 'Zip API Files'
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)\M.WebApi\'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)\webapi-$(Build.BuildId).zip'
+        replaceExistingArchive: true
+
+    - task: CopyFiles@2
+      condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+      displayName: 'Copy Timer Job Services Project Files'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)\M.TimerJobsService'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)\timerjobsservice-$(Build.BuildId)'
+    
+    - task: CopyFiles@2
+      condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+      displayName: 'Copy SQL Project Files'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)\M.Data.Sql'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)\sql-$(Build.BuildId)'
+      
+    # - task: UniversalPackages@0
+    #   displayName: 'Publish Artifacts to DEV'
+    #   # condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+    #   inputs:
+    #     command: publish
+    #     publishDirectory: $(Build.ArtifactStagingDirectory)
+    #     vstsFeedPublish: 'minerva-dev-feed'
+    #     vstsFeedPackagePublish: minerva-artifacts
+    #     packagePublishDescription: dev-$(Build.BuildNumber)
+    #     versionOption: 'patch'
+
+    # - task: UniversalPackages@0
+    #   displayName: 'Publish Artifacts to QA'
+    #   # condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/tags/qa_*'))
+    #   inputs:
+    #     command: publish
+    #     publishDirectory: $(Build.ArtifactStagingDirectory)
+    #     vstsFeedPublish: 'minerva-qa-feed'
+    #     vstsFeedPackagePublish: minerva-artifacts
+    #     packagePublishDescription: qa-$(Build.BuildNumber)
+    #     versionOption: 'patch'
+
+    # - task: UniversalPackages@0
+    #   displayName: 'Publish Artifacts to UAT'
+    #   # condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/release'))
+    #   inputs:
+    #     command: publish
+    #     publishDirectory: $(Build.ArtifactStagingDirectory)
+    #     vstsFeedPublish: 'minerva-uat-feed'
+    #     vstsFeedPackagePublish: minerva-artifacts
+    #     packagePublishDescription: uat-$(Build.BuildNumber)
+    #     versionOption: 'patch'
+
+    - task: PublishPipelineArtifact@0
+      displayName: 'Publish pipeline artifacts'
+      condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+      inputs:
+        ArtifactName: '$(ArtifactName)'
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+
